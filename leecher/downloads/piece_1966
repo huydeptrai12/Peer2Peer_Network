@@ -1,7 +1,0 @@
-cases -- by newer deep learning architectures such as the transformer. Vanishing gradients and exploding gradients, seen during backpropagation in earlier neural networks, are prevented by using regularized weights over fewer connections.
-
-- [2][3] For example, for each neuron in the fully-connected layer, 10,000 weights would be required for processing an image sized 100 × 100 pixels. However, applying cascaded convolution (or cross-correlation) kernels,[4][5] only 25 neurons are required to process 5x5-sized tiles.[6][7] 
-
-- Higher-layer features are extracted from wider context windows, compared to lower-layer features.
-
-CNNs are also known as shift invariant or space invariant artificial neural networks, based on the shared-weight architecture of the convolution kernels or filters that slide along input features and provide translation-equivariant responses known as feature maps.[13][14] Counter-intuitively, most convolutional neural networks are not invariant to translation, due to the downsamplin
