@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+
+# Ignore all PNG, TXT, and MP4 files
+*.png
+*.txt
+*.mp4

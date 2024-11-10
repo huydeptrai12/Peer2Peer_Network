@@ -26,7 +26,7 @@ def create_torrent_file(folder_name, piece_length, torrent_file_dest, tracker_ur
     # Concatenate all piece hashes for bencoding
     # pieces = b''.join(all_piece_hashes)
     pieces = all_piece_hashes
-    print(pieces)
+    # print(pieces)
     # Create torrent metadata structure
     torrent_info = {
         "name": os.path.basename(folder_name),

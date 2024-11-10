@@ -45,18 +45,32 @@ class Tracker:
 
         # Listen for 'quit' message to handle peer disconnection
         while True:
-            data = peer_socket.recv(1024).decode()
-            if data == "quit":
-                with self.lock:
-                    self.active_peers.remove(peer_entry)
-                    del self.peer_sockets[peer_entry]
-                peer_socket.close()
-                self.broadcast_peer_list()
-                print(f"Peer {peer_entry} left the network")
+            try:
+                data = peer_socket.recv(1024).decode()
+                if data == "quit":
+                    self.remove_peer(peer_entry)
+                    break
+            except OSError as e:
+                print(f"CONNECTION TO {peer_entry} CLOSED")
+                self.remove_peer(peer_entry)
                 break
+
+    def remove_peer(self, peer_entry):
+        # Remove peer and update all other peers
+        with self.lock:
+            if peer_entry in self.active_peers:
+                self.active_peers.remove(peer_entry)
+                if peer_entry in self.peer_sockets:
+                    self.peer_sockets[peer_entry].close()
+                    del self.peer_sockets[peer_entry]
+                print(f"Peer {peer_entry} left the swarm")
+
+        # Broadcast updated peer list
+        self.broadcast_peer_list()
 
     def broadcast_peer_list(self):
         # Send the active peer list to all connected peers
+        print(f"UPDATED PEER LIST {self.active_peers}")
         peer_data = pickle.dumps(self.active_peers)
         with self.lock:
             for peer, socket in self.peer_sockets.items():

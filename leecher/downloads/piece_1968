@@ -1,0 +1,5 @@
+ they cover the entire visual field.
+
+CNNs use relatively little pre-processing compared to other image classification algorithms. This means that the network learns to optimize the filters (or kernels) through automated learning, whereas in traditional algorithms these filters are hand-engineered. This independence from prior knowledge and human intervention in feature extraction is a major advantage
+
+Tấm nghe lời vào đào bốn hũ lên, hũ thứ nhất mở ra là một bộ váy áo đẹp rực rỡ, hũ thứ hai mở ra là một đôi giày thêu rất đẹp, hũ thứ 3 là một con ngựa nhỏ xíu, nhưng kì lạ là khi đặt xuống đất, con ngựa bỗng chốc biến thành ngựa thật, hũ cuối cùng là một yên cương vững chắc. Tấm vui mừng khôn xiết, vội thay đồ rồi lên đường tiến kinh. Ngựa phóng một lúc đã tới kinh thành, nhưng chẳng may trên đường đi qua chỗ lội, Tấm đã vô tình đánh rơi một chiếc gi�
