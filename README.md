@@ -9,5 +9,5 @@ Although it is not something new or crazy, I learnt a lot from this.
 3. Copy the torrent file into the leecher folder, then run leecher.py. You should run the leecher.py by writing prompt in the terminal. Eg: python leecher.py mode, the mode here is either 0 or 1. 0 is for single piece downloading mode and 1 is for multiple piece downloading mode.
 4. If you want to run many leecher, make sure that you copy the torrnet file into that leecher folder.
 5. That should be it, the leecher will download all the file in the store folder in the seeder.
-#DOCUMENT
+# DOCUMENT
 Well, I haven't dont this but this will be available soon ! 
