@@ -10,4 +10,4 @@ Although it is not something new or crazy, I learnt a lot from this.
 4. If you want to run many leecher, make sure that you copy the torrnet file into that leecher folder.
 5. That should be it, the leecher will download all the file in the store folder in the seeder.
 # DOCUMENT
-Well, I haven't dont this but this will be available soon ! 
+Well, I haven't done this but this will be available soon ! 
