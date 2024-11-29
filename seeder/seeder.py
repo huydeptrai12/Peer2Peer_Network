@@ -11,7 +11,7 @@ PIECE = 7
 HAVE = 8
 
 class Seeder:
-    def __init__(self, folder_name, piece_length, torrent_file_dest, listen_port=6881, tracker_ip="127.0.0.1", tracker_port=5008):
+    def __init__(self, folder_name, piece_length, torrent_file_dest, listen_port=6881, tracker_ip="127.0.0.1", tracker_port=5008, print_enabled=False):
         self.folder_name = folder_name
         self.piece_length = piece_length
         self.torrent_file_dest = torrent_file_dest
@@ -21,15 +21,33 @@ class Seeder:
         self.tracker_port = tracker_port
         self.piece_map = {}  # Mapping from piece index to piece data
         self.create_torrent_file()
-        
+
         self.exit_event = threading.Event()  # Used to signal threads to exit
         self.client_sockets = []  # Track active connections to leechers
+        self.peer_statistics = {}  # Store statistics for sent/received messages
+        self.statistics_lock = threading.Lock()
+
+        self.print_enabled = print_enabled  # Enable/disable detailed logs
 
     def create_torrent_file(self):
         # Create the torrent file and initialize the piece mapping
         torrent_file_process.create_torrent_file(self.folder_name, self.piece_length, self.torrent_file_dest)
         self.piece_map = torrent_file_process.get_piece_map(self.folder_name, self.piece_length)
         self.bitfield = bytearray([1] * len(self.piece_map))  # All pieces are available
+        
+    def log(self, message):
+        if self.print_enabled:
+            print(message)
+
+    def register_with_tracker(self):
+        try:
+            self.tracker_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.tracker_socket.connect((self.tracker_ip, self.tracker_port))
+            self.tracker_socket.send(str(self.listen_port).encode())
+            self.log(f"Registered with tracker at {self.tracker_ip}:{self.tracker_port} on port {self.listen_port}")
+        except ConnectionError:
+            self.log("Failed to connect to the tracker.")
+            self.tracker_socket = None
 
     def register_with_tracker(self):
         # Connect to the tracker and send listening port information
@@ -63,19 +81,22 @@ class Seeder:
                     client_socket, client_address = server_socket.accept()
                     print(f"Connected to {client_address}")
                     self.client_sockets.append(client_socket)
+                    # Initialize statistics for the new leecher
+                    with self.statistics_lock:
+                        self.peer_statistics[client_address] = {'sent': 0, 'received': 0}
                     threading.Thread(target=self.handle_leecher_connection, args=(client_socket, client_address)).start()
                 except socket.timeout:
                     continue  # Timeout, check if exit_event is set
 
     def start(self):
         self.register_with_tracker()
-        # Start a thread to listen for quit command from user
-        threading.Thread(target=self.listen_for_quit).start()
+        # Start a thread to listen for quit or show command from user
+        threading.Thread(target=self.listen_for_commands).start()
         # Start listening for leechers
         self.start_listening()
 
-    def listen_for_quit(self):
-        # Listen for 'quit' command in terminal to exit the swarm
+    def listen_for_commands(self):
+        # Listen for 'quit' or 'show' commands in the terminal
         while not self.exit_event.is_set():
             command = input()
             if command.strip().lower() == "quit":
@@ -84,6 +105,8 @@ class Seeder:
                 self.deregister_from_tracker()
                 self.close_all_connections()
                 break
+            elif command.strip().lower() == "show":
+                self.display_statistics()
 
     def handle_leecher_connection(self, leecher_socket, client_address):
         try:          
@@ -102,14 +125,14 @@ class Seeder:
                     self.receive_bitfield(leecher_socket, data)
                 elif message_id == REQUEST:  # Request message
                     piece_index, = struct.unpack("!I", data)
-                    self.send_piece(leecher_socket, piece_index)
+                    self.send_piece(leecher_socket, piece_index, client_address)
                 elif message_id == PIECE:  # Piece message
                     piece_index = struct.unpack("!I", data[:4])[0]
                     piece_data = data[4:]
-                    print(f"DOWNLOADED {piece_index} FROM {leecher_socket}")
+                    self.log(f"DOWNLOADED {piece_index} FROM {client_address}")
                 elif message_id == HAVE:
                     piece_index, = struct.unpack("!I", data)
-                    print(f"{client_address} has {piece_index}")
+                    self.log(f"{client_address} has {piece_index}")
 
         except (ConnectionResetError, BrokenPipeError):
             print(f"Connection to {client_address} lost.")
@@ -129,19 +152,22 @@ class Seeder:
         return data
     
     def receive_bitfield(self, peer, bitfield):
-        print(f"RECEIVED BD {bitfield} FROM {peer}")
+        self.log(f"RECEIVED BD {bitfield} FROM {peer}")
 
     def send_bitfield(self, leecher_socket):
         message = struct.pack("!IB", 1 + len(self.bitfield), 5) + self.bitfield
         self._send_message(leecher_socket, message)
-        print(f"SEND BD {message} TO {leecher_socket.getpeername()}")
+        self.log(f"SEND BD {message} TO {leecher_socket.getpeername()}")
 
-    def send_piece(self, leecher_socket, piece_index):
+    def send_piece(self, leecher_socket, piece_index, client_address):
         piece_data = self.piece_map.get(piece_index)
         if piece_data:
             piece_message = struct.pack("!IBI", 5 + len(piece_data), 7, piece_index) + piece_data
             self._send_message(leecher_socket, piece_message)
-            print(f"SEND {piece_index} to {leecher_socket.getpeername()}.")
+            self.log(f"SENT PIECE {piece_index} TO {client_address}.")
+            # Update statistics
+            with self.statistics_lock:
+                self.peer_statistics[client_address]['sent'] += 1
 
     def _send_message(self, sock, message):
         try:
@@ -152,7 +178,6 @@ class Seeder:
     def close_all_connections(self):
         # Close all active leecher connections
         for client_socket in self.client_sockets:
-            # print(f"CONNECTION WITH {client_socket.getpeername()} CLOSED")
             try:
                 client_socket.close()
             except OSError:
@@ -160,6 +185,14 @@ class Seeder:
         self.client_sockets.clear()
         print("All connections closed.")
 
+    def display_statistics(self):
+        # Display the statistics for each connected peer
+        print("\n--- Seeder Statistics ---")
+        with self.statistics_lock:
+            for peer, stats in self.peer_statistics.items():
+                print(f"Peer {peer}: Sent: {stats['sent']}, Received: {stats['received']}")
+        print("-------------------------")
+
 # Example usage
-seeder = Seeder(folder_name="store", piece_length=1024, torrent_file_dest="file.torrent")
+seeder = Seeder(folder_name="store", piece_length=2048, torrent_file_dest="file.torrent", print_enabled=False)
 seeder.start()

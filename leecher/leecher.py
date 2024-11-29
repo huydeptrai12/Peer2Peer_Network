@@ -15,24 +15,26 @@ PIECE = 7
 HAVE = 8
 
 class Leecher:
-    def __init__(self, torrent_file_path, download_folder):
+    def __init__(self, torrent_file_path, download_folder, port, random_bool, print_enabled):
         self.torrent_file_path = torrent_file_path
         self.download_folder = download_folder
         self.peer_list = []
-        
+        self.random_bool = random_bool
         # Dictionaries for peer management and piece tracking
         self.socket_dic = {}
         self.bitfield_dic = {}
         self.piece_has = {}
-        
+        self.dup = 0
+
         self.my_pieces = set()
         #self.listening_port = random.randint(6000, 9000)
-        self.listening_port = 6001
+        self.listening_port = port
         self.listening_ip = socket.gethostbyname(socket.gethostname())
         self.piece_length = None
         self.piece_count = 0
         self.piece_hashes = []
         self.downloaded_pieces = {}
+        self.peer_statistics = {}
 
         # Fine-grained locks for each shared structure
         self.peer_list_lock = threading.Lock()
@@ -42,6 +44,13 @@ class Leecher:
         self.socket_locks = {}
         self.exit_event = threading.Event()  
         self.my_pieces_lock = threading.Lock()
+        self.statistics_lock = threading.Lock()
+
+        self.print_enabled = print_enabled  # Enable/disable printing
+
+    def log(self, message):
+        if self.print_enabled:
+            print(message)
 
     def parse_torrent_file(self):
         # Load metadata from the torrent file
@@ -105,8 +114,11 @@ class Leecher:
             peer_socket = socket.create_connection(peer)
             with self.socket_dic_lock:
                 self.socket_dic[peer] = peer_socket
-                self.socket_locks[peer] = threading.Lock()
+                # self.socket_locks[peer] = threading.Lock()
             self.send_bitfield(peer)
+            # Initialize statistics for the peer
+            with self.statistics_lock:
+                self.peer_statistics[peer] = {'sent': 0, 'received': 0}
             threading.Thread(target=self.receive_messages, args=(peer,)).start()
         except (ConnectionRefusedError, OSError) as e:
             print(f"Could not connect to peer {peer} {e}")
@@ -125,6 +137,8 @@ class Leecher:
                     with self.socket_dic_lock:
                         self.socket_dic[client_address] = client_socket
                         self.socket_locks[client_address] = threading.Lock()
+                    with self.statistics_lock:
+                        self.peer_statistics[client_address] = {'sent': 0, 'received': 0}
                     threading.Thread(target=self.receive_messages, args=(client_address,)).start()
                 except socket.timeout:
                     continue
@@ -133,7 +147,7 @@ class Leecher:
         bitfield_payload = bytearray(self.piece_count)
         for index in self.my_pieces:
             bitfield_payload[index] = 1
-        print(f"SEND BD {bitfield_payload} to {peer}")
+        self.log(f"SEND BD to {peer}")
         if loop:
             message = struct.pack("!IB", 1 + len(bitfield_payload), BITFIELD) + bitfield_payload
         else:
@@ -162,8 +176,7 @@ class Leecher:
                 elif message_id == PIECE:  # Piece message
                     piece_index = struct.unpack("!I", data[:4])[0]
                     piece_data = data[4:]
-                    print(f"DOWNLOADED {piece_index} FROM {peer}")
-                    self.process_piece(piece_index, piece_data)
+                    self.process_piece(piece_index, piece_data, peer)
                 elif message_id == HAVE:
                     piece_index, = struct.unpack("!I", data)
                     self.process_have_message(peer, piece_index)
@@ -175,7 +188,7 @@ class Leecher:
 
     def process_have_message(self, peer, piece_index):
         # Update bitfield_dic with the new piece for the peer
-        print(f"{peer} has {piece_index}")
+        self.log(f"{peer} has {piece_index}")
         with self.piece_has_lock:
             if peer in self.bitfield_dic:
                 # Update the peer's bitfield to indicate they have this piece
@@ -195,15 +208,23 @@ class Leecher:
                 self.piece_has[piece_index].append(peer)
 
     def send_piece(self, peer, piece_index):
+        
         with self.downloaded_pieces_lock:
             # Check if the requested piece is available
             if piece_index in self.downloaded_pieces:
+                with self.piece_has_lock:
+                    peer_bitfield = self.bitfield_dic.get(peer, bytearray(self.piece_count))
+                    if peer_bitfield[piece_index] == 1:
+                        print(f"{peer} HAD {piece_index} NO SEND")
+                        return
                 piece_data = self.downloaded_pieces[piece_index]
                 # Construct the piece message: length, ID=7, piece_index, and piece_data
                 message = struct.pack("!IBI", 5 + len(piece_data), PIECE, piece_index) + piece_data
                 # Send the piece message
-                print(f"SENDING PIECE {piece_index} TO {peer}")
                 self._send_message(peer, message)
+                self.log(f"SENT PIECE {piece_index} TO {peer}")
+                with self.statistics_lock:
+                    self.peer_statistics[peer]['sent'] += 1
             else:
                 # Log that the requested piece is not available
                 print(f"Requested piece {piece_index} not available for {peer}")
@@ -218,7 +239,7 @@ class Leecher:
         return data
 
     def receive_bitfield(self, peer, bitfield):
-        print(f"RECEIVED BD {bitfield} FROM {peer}")
+        self.log(f"RECEIVED BD {bitfield} FROM {peer}")
         with self.piece_has_lock:
             self.bitfield_dic[peer] = bitfield
             for piece_index, has_piece in enumerate(bitfield):
@@ -243,23 +264,31 @@ class Leecher:
     def request_piece(self, piece_index):
         with self.piece_has_lock:
             peers_with_piece = self.piece_has.get(piece_index, [])
+        self.log(f"LIST: {peers_with_piece} has {piece_index}")
         if peers_with_piece:
             peer = random.choice(peers_with_piece)
             message = struct.pack("!IBI", 5, 6, piece_index)
-            print(f"SEND REQUEST {piece_index} to {peer}")
             self._send_message(peer, message)
+            self.log(f"SENT REQUEST {piece_index} to {peer}")
 
-    def process_piece(self, piece_index, piece_data):
+    def process_piece(self, piece_index, piece_data, peer):
+        if (piece_index in self.my_pieces):
+            self.dup += 1
+            return
         with self.downloaded_pieces_lock:
             self.downloaded_pieces[piece_index] = piece_data
-        piece_path = os.path.join(self.download_folder, f"piece_{piece_index}")
-        with open(piece_path, "wb") as piece_file:
-            piece_file.write(piece_data)
+            with self.statistics_lock:
+                self.peer_statistics[peer]['received'] += 1
+            self.log(f"DOWNLOADED {piece_index} FROM {peer}")
+        # piece_path = os.path.join(self.download_folder, f"piece_{piece_index}")
+        # with open(piece_path, "wb") as piece_file:
+        #     piece_file.write(piece_data)
         if self.verify_piece(piece_index, piece_data):
             with self.my_pieces_lock:
                 self.my_pieces.add(piece_index)
             self.broadcast_have(piece_index)
-
+        else:
+            self.log(f"{piece_index} NOT VALID")
     def verify_piece(self, piece_index, piece_data):
         expected_hash = self.piece_hashes[piece_index]
         actual_hash = hashlib.sha1(piece_data).hexdigest()
@@ -269,25 +298,63 @@ class Leecher:
         with self.peer_list_lock:
             for peer in self.peer_list:
                 message = struct.pack("!IBI", 5, HAVE, piece_index)
-                print(f"SENT HAVE {piece_index} to {peer}")
                 self._send_message(peer, message)
+                self.log(f"SENT HAVE {piece_index} to {peer}")
 
     def download_pieces(self):
         piece_indexes = list(range(self.piece_count))
-        random.shuffle(piece_indexes)
-        for piece_index in piece_indexes:
-            if piece_index not in self.my_pieces:
-                self.request_piece(piece_index)
+        i = 0
+        print("START SENDING")
+        while i < 30:
+            i += 1
+            
+            with self.my_pieces_lock:
+                not_downloaded_set = set(piece_indexes) - self.my_pieces
 
+            print(len(not_downloaded_set), i)
+            if len(not_downloaded_set) == 0:
+                break
+
+            not_downloaded_list = list(not_downloaded_set)
+            if self.random_bool:
+                random.shuffle(not_downloaded_list)
+
+            for piece_index in not_downloaded_list:
+                # Double-check under lock before requesting a piece
+                check = True
+                with self.my_pieces_lock:
+                    check = piece_index not in self.my_pieces
+                if check:
+                    self.request_piece(piece_index)
+                else:
+                    self.log("ERROR DOWNLOAD PIECES")
+
+            print(f"NOT DOWNLOADED {len(not_downloaded_set)}")
+            time.sleep(float(len(not_downloaded_set)) / 10000)
+
+
+        print("SENT ALL REQUEST")
         while len(self.downloaded_pieces) < self.piece_count:
+            not_downloaed_set = set(range(self.piece_count)) - self.my_pieces
+            time.sleep(0.5)
             print(f"DOWNLOADING {len(self.downloaded_pieces)} / {self.piece_count}", end = '\r')
+            print(f"NOT DOWNLOADED {not_downloaed_set}")
         print(f"DOWNLOADING {len(self.downloaded_pieces)} / {self.piece_count}", end = '\r')
         print("All pieces downloaded.")
+
+    def display_statistics(self):
+        print("\n--- Statistics ---")
+        print(self.dup)
+        with self.peer_list_lock:
+            for peer, stats in self.peer_statistics.items():
+                print(f"Peer {peer}: Sent: {stats['sent']}, Received: {stats['received']}")
+        print("------------------")
 
     def simu_download_pieces(self):
         # Create a list of all pieces and shuffle it for random download order
         piece_indices = list(range(self.piece_count))
-        random.shuffle(piece_indices)
+        if (self.random_bool):
+            random.shuffle(piece_indices)
 
         # Limit the number of concurrent download threads to avoid overwhelming the system
         max_concurrent_downloads = 5  # You can adjust this based on system capacity
@@ -315,11 +382,13 @@ class Leecher:
         for t in active_threads:
             t.join()
 
+        print("SENT ALL REQUEST")
         while len(self.downloaded_pieces) < self.piece_count:
-            print("DOWNLOADING", end = '\r')
-            time.sleep(0.1)
-            #print(f"Downloaded {len(self.downloaded_pieces)}/{self.piece_count} pieces.")
-
+            not_downloaed_set = set(range(self.piece_count)) - self.my_pieces
+            time.sleep(0.5)
+            print(f"DOWNLOADING {len(self.downloaded_pieces)} / {self.piece_count}", end = '\r')
+            print(f"NOT DOWNLOADED {not_downloaed_set}")
+        print(f"DOWNLOADING {len(self.downloaded_pieces)} / {self.piece_count}", end = '\r')
         print("All pieces downloaded.")
 
     def download_piece_thread(self, piece_index):
@@ -327,13 +396,13 @@ class Leecher:
             # Get available peers with the required piece
             peers_with_piece = self.piece_has.get(piece_index, [])
         if not peers_with_piece:
-            print(f"No peers with piece {piece_index} available.")
+            self.log(f"No peers with piece {piece_index} available.")
             return
 
         # Choose a random peer and request the piece
         peer = random.choice(peers_with_piece)
         message = struct.pack("!IBI", 5, REQUEST, piece_index)
-        print(f"REQUESTING PIECE {piece_index} FROM {peer}")
+        self.log(f"REQUEST PIECE {piece_index} FROM {peer}")
         self._send_message(peer, message)
 
     def assemble_files(self):
@@ -371,31 +440,49 @@ class Leecher:
 
         print("Exited the swarm.")
 
-    def listen_for_quit(self):
+    def input_handle(self):
         while not self.exit_event.is_set():
             user_input = input()
             if user_input.lower() == "quit":
                 self.quit_swarm()
                 break
+            elif user_input.lower() == "show":
+                self.display_statistics()
 
+    
     def start(self, mode = 0):
         start = time.time()
         self.parse_torrent_file()
         self.register_with_tracker()
         threading.Thread(target=self.listen_for_incoming_connections).start()
-        threading.Thread(target=self.listen_for_quit).start()
-        #time.sleep(2)
+        threading.Thread(target=self.input_handle).start()
+        time.sleep(1)
         if (mode == 1):
             self.simu_download_pieces()
         elif (mode == 0):
             self.download_pieces()
 
         self.assemble_files()
-        print(time.time() - start)
+        #self.display_statistics()
+        return (time.time() - start)
 
-import sys
-# Example usage 
-if __name__ == "__main__":
-    mode = int(sys.argv[1])
-    leecher = Leecher(torrent_file_path="file.torrent", download_folder="downloads")
-    leecher.start(mode=mode)
+
+import argparse
+
+parser = argparse.ArgumentParser(description="Leecher in a P2P network")
+parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+parser.add_argument("--mode", type=int, default=0, help="Mode of operation: 0 for sequential, 1 for parallel")
+parser.add_argument("--random", action="store_true", help="Enable random piece downloading")
+parser.add_argument("port", type=int, help="Port number for listening connections")
+
+args = parser.parse_args()
+leecher = Leecher(
+    torrent_file_path="file.torrent",
+    download_folder="downloads",
+    port=args.port,
+    random_bool=args.random,
+    print_enabled=args.verbose
+)
+print(leecher.start(mode=args.mode))
+
+
