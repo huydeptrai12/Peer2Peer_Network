@@ -27,8 +27,10 @@ class Leecher:
         self.dup = 0
 
         self.my_pieces = set()
-        #self.listening_port = random.randint(6000, 9000)
-        self.listening_port = port
+        if (port is None):
+            self.listening_port = random.randint(6000, 9000)
+        else:
+            self.listening_port = port
         self.listening_ip = socket.gethostbyname(socket.gethostname())
         self.piece_length = None
         self.piece_count = 0
@@ -145,8 +147,9 @@ class Leecher:
 
     def send_bitfield(self, peer, loop = True):
         bitfield_payload = bytearray(self.piece_count)
-        for index in self.my_pieces:
-            bitfield_payload[index] = 1
+        with self.my_pieces_lock:
+            for index in self.my_pieces:
+                bitfield_payload[index] = 1
         self.log(f"SEND BD to {peer}")
         if loop:
             message = struct.pack("!IB", 1 + len(bitfield_payload), BITFIELD) + bitfield_payload
@@ -468,14 +471,15 @@ class Leecher:
 
 
 import argparse
+import sys
 
 parser = argparse.ArgumentParser(description="Leecher in a P2P network")
 parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 parser.add_argument("--mode", type=int, default=0, help="Mode of operation: 0 for sequential, 1 for parallel")
 parser.add_argument("--random", action="store_true", help="Enable random piece downloading")
-parser.add_argument("port", type=int, help="Port number for listening connections")
+parser.add_argument("--port", type=int, default = None, help="Port number for listening connections")
 
-args = parser.parse_args()
+args = parser.parse_args(sys.argv[1:])
 leecher = Leecher(
     torrent_file_path="file.torrent",
     download_folder="downloads",
@@ -484,5 +488,3 @@ leecher = Leecher(
     print_enabled=args.verbose
 )
 print(leecher.start(mode=args.mode))
-
-
