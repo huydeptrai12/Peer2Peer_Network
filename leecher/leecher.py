@@ -307,14 +307,14 @@ class Leecher:
     def download_pieces(self):
         piece_indexes = list(range(self.piece_count))
         i = 0
-        print("START SENDING")
+        print("START SENDING REQUEST")
         while i < 30:
             i += 1
             
             with self.my_pieces_lock:
                 not_downloaded_set = set(piece_indexes) - self.my_pieces
 
-            print(len(not_downloaded_set), i)
+            print(f"ITERATION {i}: PIECE NOT DOWNLOADED {len(not_downloaded_set)}")
             if len(not_downloaded_set) == 0:
                 break
 
@@ -331,8 +331,6 @@ class Leecher:
                     self.request_piece(piece_index)
                 else:
                     self.log("ERROR DOWNLOAD PIECES")
-
-            print(f"NOT DOWNLOADED {len(not_downloaded_set)}")
             time.sleep(float(len(not_downloaded_set)) / 10000)
 
 
@@ -476,7 +474,7 @@ import sys
 parser = argparse.ArgumentParser(description="Leecher in a P2P network")
 parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 parser.add_argument("--mode", type=int, default=0, help="Mode of operation: 0 for sequential, 1 for parallel")
-parser.add_argument("--random", action="store_true", help="Enable random piece downloading")
+parser.add_argument("--random", action="store_true", default=True, help="Enable random piece downloading")
 parser.add_argument("--port", type=int, default = None, help="Port number for listening connections")
 
 args = parser.parse_args(sys.argv[1:])
@@ -487,4 +485,4 @@ leecher = Leecher(
     random_bool=args.random,
     print_enabled=args.verbose
 )
-print(leecher.start(mode=args.mode))
+print(f"TIME ESLAPSED: {leecher.start(mode=args.mode)}")

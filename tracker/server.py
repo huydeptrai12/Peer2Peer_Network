@@ -13,9 +13,10 @@ start = threading.Thread(target=initiate, args=("manager.py",))
 start.start()
 
 PORT = 8000  # Port number to use
+HOST = '192.168.1.9'
 
 Handler = http.server.SimpleHTTPRequestHandler
 
-with socketserver.TCPServer(("", PORT), Handler) as httpd:
+with socketserver.TCPServer(('', PORT), Handler) as httpd:
     print("Server running on localhost port", PORT)
     httpd.serve_forever()

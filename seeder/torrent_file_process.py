@@ -76,3 +76,17 @@ def get_piece_map(folder_name, piece_length):
 
     print(f"Piece map created with {len(piece_map)} pieces.")
     return piece_map
+
+import requests
+def get_tracker_ip_port(tracker_url):
+    # Send GET request to retrieve tracker information from 'tracker.txt'
+    tracker_url = f"{tracker_url}/tracker.txt"
+    try:
+        response = requests.get(tracker_url)
+        response.raise_for_status()
+        tracker_ip, tracker_port = response.text.strip().split()
+        return tracker_ip, int(tracker_port)
+    except requests.RequestException as e:
+        print(f"Failed to retrieve tracker information: {e}")
+        return None, None
+

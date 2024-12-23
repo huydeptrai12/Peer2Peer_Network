@@ -11,17 +11,19 @@ PIECE = 7
 HAVE = 8
 
 class Seeder:
-    def __init__(self, folder_name, piece_length, torrent_file_dest, listen_port=6881, tracker_ip="127.0.0.1", tracker_port=5008, print_enabled=False):
+    def __init__(self, folder_name, piece_length, torrent_file_dest, listen_port=6882, tracker_url = 'http://localhost:8000', print_enabled=False):
         self.folder_name = folder_name
         self.piece_length = piece_length
         self.torrent_file_dest = torrent_file_dest
         self.listen_port = listen_port
         self.listen_ip = socket.gethostbyname(socket.gethostname())
-        self.tracker_ip = tracker_ip
-        self.tracker_port = tracker_port
+        # self.tracker_ip = tracker_ip
+        # self.tracker_port = tracker_port
+        self.tracker_url = tracker_url
         self.piece_map = {}  # Mapping from piece index to piece data
         self.create_torrent_file()
-
+        self.tracker_ip, self.tracker_port = torrent_file_process.get_tracker_ip_port(self.tracker_url)
+        print(self.tracker_ip, self.tracker_port)
         self.exit_event = threading.Event()  # Used to signal threads to exit
         self.client_sockets = []  # Track active connections to leechers
         self.peer_statistics = {}  # Store statistics for sent/received messages
@@ -31,10 +33,10 @@ class Seeder:
 
     def create_torrent_file(self):
         # Create the torrent file and initialize the piece mapping
-        torrent_file_process.create_torrent_file(self.folder_name, self.piece_length, self.torrent_file_dest)
+        torrent_file_process.create_torrent_file(self.folder_name, self.piece_length, self.torrent_file_dest, self.tracker_url)
         self.piece_map = torrent_file_process.get_piece_map(self.folder_name, self.piece_length)
         self.bitfield = bytearray([1] * len(self.piece_map))  # All pieces are available
-        
+    
     def log(self, message):
         if self.print_enabled:
             print(message)
@@ -47,17 +49,6 @@ class Seeder:
             self.log(f"Registered with tracker at {self.tracker_ip}:{self.tracker_port} on port {self.listen_port}")
         except ConnectionError:
             self.log("Failed to connect to the tracker.")
-            self.tracker_socket = None
-
-    def register_with_tracker(self):
-        # Connect to the tracker and send listening port information
-        try:
-            self.tracker_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.tracker_socket.connect((self.tracker_ip, self.tracker_port))
-            self.tracker_socket.send(str(self.listen_port).encode())
-            print(f"Registered with tracker at {self.tracker_ip}:{self.tracker_port} on port {self.listen_port}")
-        except ConnectionError:
-            print("Failed to connect to the tracker.")
             self.tracker_socket = None
 
     def deregister_from_tracker(self):
@@ -194,5 +185,19 @@ class Seeder:
         print("-------------------------")
 
 # Example usage
-seeder = Seeder(folder_name="store", piece_length=2048, torrent_file_dest="file.torrent", print_enabled=False)
+import argparse
+
+# Add this block to handle command-line arguments
+parser = argparse.ArgumentParser(description="Run a torrent seeder.")
+parser.add_argument("--piece_length", type=int, default=2048, help="Length of each piece in bytes.")
+parser.add_argument("--port", type=int, default=6882, help="Port number for the seeder to listen on (default: 6882).")
+parser.add_argument("--verbose", action="store_true", default = False, help="Enable detailed logging.")
+args = parser.parse_args()
+
+seeder = Seeder(folder_name="store", 
+                piece_length=args.piece_length, 
+                torrent_file_dest="file.torrent", 
+                listen_port=args.port,
+                tracker_url='http://192.168.1.9:8000',
+                print_enabled=False)
 seeder.start()

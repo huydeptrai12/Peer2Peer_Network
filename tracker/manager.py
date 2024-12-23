@@ -33,28 +33,36 @@ class Tracker:
 
     def handle_peer(self, peer_socket, peer_address):
         # Register a peer and update active peer list
-        peer_port = int(peer_socket.recv(1024).decode())
-        peer_entry = (peer_address[0], peer_port)
+        print("HERE")
+        message = peer_socket.recv(1024).decode()
+        print(f"{peer_address} MS: {message}")
+        try:
+            peer_port = int(message)
+            peer_entry = (peer_address[0], peer_port)
 
-        with self.lock:
-            self.active_peers.append(peer_entry)
-            self.peer_sockets[peer_entry] = peer_socket
+            with self.lock:
+                self.active_peers.append(peer_entry)
+                self.peer_sockets[peer_entry] = peer_socket
+            print("OK")
+            # Broadcast updated peer list to all connected peers
+            self.broadcast_peer_list()
 
-        # Broadcast updated peer list to all connected peers
-        self.broadcast_peer_list()
-
-        # Listen for 'quit' message to handle peer disconnection
-        while True:
-            try:
-                data = peer_socket.recv(1024).decode()
-                if data == "quit":
+            # Listen for 'quit' message to handle peer disconnection
+            while True:
+                try:
+                    data = peer_socket.recv(1024).decode()
+                    if data == "quit":
+                        self.remove_peer(peer_entry)
+                        break
+                except OSError as e:
+                    print(f"CONNECTION TO {peer_entry} CLOSED")
                     self.remove_peer(peer_entry)
                     break
-            except OSError as e:
-                print(f"CONNECTION TO {peer_entry} CLOSED")
-                self.remove_peer(peer_entry)
-                break
+        except :
+            print("ERROR WHEN RECEIVING MESSAGE FROM PEER")
+            pass
 
+    
     def remove_peer(self, peer_entry):
         # Remove peer and update all other peers
         with self.lock:
